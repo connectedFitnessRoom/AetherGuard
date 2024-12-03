@@ -22,12 +22,16 @@ MQ-135 AirQuality Sensor
 ammonia, benzene, alcohols, nitrogen oxide, carbon monoxide)
   - 10k resistor on data outputs and 3.3v
 
+0,96-zool oled display 
+
+  -  https://www.mouser.com/datasheet/2/1398/Soldered_333099-3395096.pdf?srsltid=AfmBOooTmRiDG2rQgAWGAja9TuC1vTCoJ541tHopa_ZUtx9-k8u0TNcs (datasheet)
+
 */
 
 //For the sensors to work correctly and send the right values, you sometimes have to let them run for several hours! Because a sensor can retain residues linked to its manufacturing, which distorts the values ​​in the first hours.
 // https://www.upesy.fr/blogs/tutorials/get-date-time-on-esp32-with-ntp-server-arduino-code?srsltid=AfmBOooBuKJPgIIyyKEwJA_6kN22pXcP2x9Fr4WWSt30wV8Qs-9uzLey (tuto date)
 
-
+//https://arduino.blaisepascal.fr/mqtt-avec-arduino/ (tuto mqtt)
 
 // ESP8266
 
@@ -39,6 +43,7 @@ ammonia, benzene, alcohols, nitrogen oxide, carbon monoxide)
 #include <ESP8266WiFi.h>     // Library for WiFi connection
 #include <WiFiUdp.h>         // UDP library for NTP
 #include <NTPClient.h>       // Library to fetch time from an NTP server
+#include <PubSubClient.h>    // Library for MQTT communication
 
 // ------------ PINS ------------
 #define DHTPIN 14            // GPIO14 (D5 on ESP8266) for DHT11 sensor
@@ -62,35 +67,39 @@ MQ135 MQ135Sensor(MQ135_ANALOG_PIN);
 const char* ssid = "your_ssid";               // WiFi SSID
 const char* password = "your_password";       // WiFi password
 
+// ------------ MQTT CONFIGURATION ------------
+const char* MQTT_BROKER = "192.168.168.129";
+const int MQTT_BROKER_PORT = 1883;
+const char* MQTT_TOPIC = "AetherGuard/sensordata";
+
 // ------------ NTP TIME CONFIGURATION ------------
-const char* ntpServer = "pool.ntp.org";       // NTP server address
+const char* ntpServer = "pool.ntp.org";        // NTP server address
 const long  gmtOffset_sec = 3600;             // GMT offset in seconds (UTC+1 for Belgium)
 const int   daylightOffset_sec = 3600;        // Offset for daylight saving time (1 hour)
-
 WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP, ntpServer, gmtOffset_sec, daylightOffset_sec);
+
+// ------------ MQTT CLIENT ------------
+WiFiClient espClient;
+PubSubClient client(espClient);
 
 
 
 void setup() {
   Serial.begin(9600);
 
+  // Init sensor
   dhtSensor.begin();
   MQ135Sensor._rzero = MQ135Sensor.getRZero();
 
+  // Start WiFi and MQTT
   wifiConnection();
+  client.setServer(MQTT_BROKER, MQTT_BROKER_PORT);
+  connectToMQTT();
 }
 
 void loop() {
-  
-  timeClient.update(); // Update time from NTP server
-  if (timeClient.getEpochTime() > 0) {  // Check if the time has been updated successfully
-    Serial.println("Heure actuelle : ");
-    Serial.println(timeClient.getFormattedTime());
-  } else {
-    Serial.println("ERROR - Time");
-  }
-
+  String currentTime = getFormattedDateTime();
 
   // Calibrate sensors
   calibrateAtSpecificTime();
@@ -100,7 +109,27 @@ void loop() {
 
   // Read and display values for DHT11 (Temperature and Humidity)
   readAndDisplayDHTValues();
-  
+
+  float temperature = dhtSensor.readTemperature();
+  float humidity = dhtSensor.readHumidity();
+  float ppm = MQ135Sensor.getPPM();
+  String jsonPayload = createJSONPayload(temperature, humidity, ppm, currentTime);
+  Serial.println(jsonPayload);
+
+  connectToMQTT();
+  // Process MQTT client if connected
+  if (client.connected()) {
+    float temperature = dhtSensor.readTemperature();
+    float humidity = dhtSensor.readHumidity();
+    float ppm = MQ135Sensor.getPPM();
+    String currentTime = timeClient.getFormattedTime();
+
+    String jsonPayload = createJSONPayload(temperature, humidity, ppm, currentTime);
+    Serial.println(jsonPayload);
+    publishToMQTT(MQTT_TOPIC, jsonPayload);
+  } else {
+    Serial.println("Skipping MQTT publish - client not connected.");
+  }
 
   // Wait before the next reading
   delay(WAITTIME);
@@ -121,8 +150,71 @@ void wifiConnection() {
   Serial.print("Local ESP8266 IP: ");
   Serial.println(WiFi.localIP());
 
-  // NTP server configuration
   timeClient.begin();
+}
+
+String getFormattedDateTime() {
+  timeClient.update(); // Update time from NTP server
+
+  if (timeClient.getEpochTime() > 0) {  // Check if the time has been updated successfully
+    // Convert epoch time to time_t
+    time_t epochTime = static_cast<time_t>(timeClient.getEpochTime());
+    struct tm* timeInfo = localtime(&epochTime);
+
+    // Format the date and time
+    char formattedDateTime[20]; // Buffer to store formatted date and time
+    strftime(formattedDateTime, sizeof(formattedDateTime), "%Y:%m:%d:%H:%M:%S", timeInfo);
+
+    // Print the formatted date and time
+    Serial.print("Date et heure actuelles : ");
+    Serial.println(formattedDateTime);
+
+    return String(formattedDateTime);
+  } else {
+    Serial.println("ERROR - Time");
+    return "1970-01-01 00:00:00";
+  }
+}
+
+
+String createJSONPayload(float temperature, float humidity, float ppm, String timestamp) {
+  String json = "{";
+  json += "\"temperature\":";
+  json += String(temperature, 1);
+  json += ",";
+  json += "\"humidity\":";
+  json += String(humidity, 1);
+  json += ",";
+  json += "\"ppm\":";
+  json += String(ppm, 1);
+  json += ",";
+  json += "\"date\":\"";
+  json += timestamp;
+  json += "\"}";
+  return json;
+}
+
+void connectToMQTT() {
+  if (!client.connected()) {
+    Serial.println("Tentative de connection MQTT...");
+    if (client.connect("ESPClient")) {  // No username or password
+      Serial.println("MQTT connecté.");
+    } else {
+      Serial.print("MQTT connection failed. Error: ");
+      Serial.println(client.state());
+    }
+  }
+}
+
+
+// Publish smthg on a topic
+void publishToMQTT(const char* topic, String payload) {
+  // code inspired by the tutorial above
+  char message[payload.length() + 1];
+  payload.toCharArray(message, payload.length() + 1);
+  client.publish(topic, message);
+  Serial.print("Published: ");
+  Serial.println(payload);
 }
 
 void calibrateAtSpecificTime() {
