@@ -10,8 +10,8 @@ DHT11–Temperature and Humidity Sensor
 
 MQ-135 AirQuality Sensor
 
-  - You NEED to change the private variables of the MQ135.h to public in order to calibrate automaticaly the sensor.
   - install the library MQT135
+  - You NEED to change the private variables of the MQ135.h to public in order to calibrate automaticaly the sensor.
 
   - https://www.olimex.com/Products/Components/Sensors/Gas/SNS-MQ135/resources/SNS-MQ135.pdf (datasheet)
   - https://github.com/Cha0s0000/Utopian/blob/master/%5BArduino%20basics%20tutorials%5D%20use%20MQ135%20air%20quality%20detecting%20module.md (tuto)
@@ -28,241 +28,32 @@ ammonia, benzene, alcohols, nitrogen oxide, carbon monoxide)
 
 */
 
-//For the sensors to work correctly and send the right values, you sometimes have to let them run for several hours! Because a sensor can retain residues linked to its manufacturing, which distorts the values ​​in the first hours.
-// https://www.upesy.fr/blogs/tutorials/get-date-time-on-esp32-with-ntp-server-arduino-code?srsltid=AfmBOooBuKJPgIIyyKEwJA_6kN22pXcP2x9Fr4WWSt30wV8Qs-9uzLey (tuto date)
-
-//https://arduino.blaisepascal.fr/mqtt-avec-arduino/ (tuto mqtt)
-
-// ESP8266
-
-
-
-// ------------ INCLUDES ------------
-#include <DHT.h>             // Library for the DHT sensor
-#include <MQ135.h>           // Library for the MQ135 sensor
-#include <ESP8266WiFi.h>     // Library for WiFi connection
-#include <WiFiUdp.h>         // UDP library for NTP
-#include <NTPClient.h>       // Library to fetch time from an NTP server
-#include <PubSubClient.h>    // Library for MQTT communication
-
-// ------------ PINS ------------
-#define DHTPIN 14            // GPIO14 (D5 on ESP8266) for DHT11 sensor
-#define DHTTYPE DHT11        // Sensor type DHT11
-#define MQ135_ANALOG_PIN A0  // A0 for MQ-135 analog output
-
-// ------------ SENSORS ------------
-DHT dhtSensor(DHTPIN, DHTTYPE);
-MQ135 MQ135Sensor(MQ135_ANALOG_PIN);
-
-// ------------ PARAMETERS ------------
-#define WAITTIME 5000             // Delay of 5 seconds between measurements
-#define CAUTION_THRESHOLD 750     // Medium-level air quality caution threshold
-#define DANGEROUS_THRESHOLD 1200  // High-level dangerous air quality threshold
-
-// ------------ CALIBRATION ------------
-#define CALIBRATION_HOUR 8        // Calibration time (hour)
-#define CALIBRATION_MINUTE 0      // Calibration time (minute)
-
-// ------------ WIFI CONFIGURATION ------------
-const char* ssid = "your_ssid";               // WiFi SSID
-const char* password = "your_password";       // WiFi password
-
-// ------------ MQTT CONFIGURATION ------------
-const char* MQTT_BROKER = "192.168.168.129";
-const int MQTT_BROKER_PORT = 1883;
-const char* MQTT_TOPIC = "AetherGuard/sensordata";
-
-// ------------ NTP TIME CONFIGURATION ------------
-const char* ntpServer = "pool.ntp.org";        // NTP server address
-const long  gmtOffset_sec = 3600;             // GMT offset in seconds (UTC+1 for Belgium)
-const int   daylightOffset_sec = 3600;        // Offset for daylight saving time (1 hour)
-WiFiUDP ntpUDP;
-NTPClient timeClient(ntpUDP, ntpServer, gmtOffset_sec, daylightOffset_sec);
-
-// ------------ MQTT CLIENT ------------
-WiFiClient espClient;
-PubSubClient client(espClient);
-
-
+// Include headers
+#include "config.h"
+#include "wifi_mqtt.h"
+#include "time_utils.h"
+#include "sensors.h"
+#include "utils.h"
 
 void setup() {
-  Serial.begin(9600);
-
-  // Init sensor
-  dhtSensor.begin();
-  MQ135Sensor._rzero = MQ135Sensor.getRZero();
-
-  // Start WiFi and MQTT
-  wifiConnection();
-  client.setServer(MQTT_BROKER, MQTT_BROKER_PORT);
-  connectToMQTT();
+    Serial.begin(9600);
+    initSensors();
+    connectToWiFi();
+    connectToMQTT();
 }
 
 void loop() {
-  String currentTime = getFormattedDateTime();
+    String currentTime = getFormattedDateTime();
 
-  // Calibrate sensors
-  calibrateAtSpecificTime();
+    calibrateAtSpecificTime();
+    float temperature = readTemperature();
+    float humidity = readHumidity();
+    float ppm = readAirQuality();
 
-  // Read and display values for MQ135 (AirQuality)
-  readAndDisplayMQ135Values();
-
-  // Read and display values for DHT11 (Temperature and Humidity)
-  readAndDisplayDHTValues();
-
-  float temperature = dhtSensor.readTemperature();
-  float humidity = dhtSensor.readHumidity();
-  float ppm = MQ135Sensor.getPPM();
-  String jsonPayload = createJSONPayload(temperature, humidity, ppm, currentTime);
-  Serial.println(jsonPayload);
-
-  connectToMQTT();
-  // Process MQTT client if connected
-  if (client.connected()) {
-    float temperature = dhtSensor.readTemperature();
-    float humidity = dhtSensor.readHumidity();
-    float ppm = MQ135Sensor.getPPM();
-    String currentTime = timeClient.getFormattedTime();
-
-    String jsonPayload = createJSONPayload(temperature, humidity, ppm, currentTime);
-    Serial.println(jsonPayload);
-    publishToMQTT(MQTT_TOPIC, jsonPayload);
-  } else {
-    Serial.println("Skipping MQTT publish - client not connected.");
-  }
-
-  // Wait before the next reading
-  delay(WAITTIME);
-}
-
-
-void wifiConnection() {
-  // code inspired by the tutorial above
-  WiFi.begin(ssid, password);
-  Serial.println("\n Connexion wifi en cours");
-
-  while (WiFi.status() != WL_CONNECTED) {
-    Serial.print(".");
-    delay(1000);
-  }
-
-  Serial.println("\n Connecion wifi réussie");
-  Serial.print("Local ESP8266 IP: ");
-  Serial.println(WiFi.localIP());
-
-  timeClient.begin();
-}
-
-String getFormattedDateTime() {
-  timeClient.update(); // Update time from NTP server
-
-  if (timeClient.getEpochTime() > 0) {  // Check if the time has been updated successfully
-    // Convert epoch time to time_t
-    time_t epochTime = static_cast<time_t>(timeClient.getEpochTime());
-    struct tm* timeInfo = localtime(&epochTime);
-
-    // Format the date and time
-    char formattedDateTime[20]; // Buffer to store formatted date and time
-    strftime(formattedDateTime, sizeof(formattedDateTime), "%Y:%m:%d:%H:%M:%S", timeInfo);
-
-    // Print the formatted date and time
     Serial.print("Date et heure actuelles : ");
-    Serial.println(formattedDateTime);
+    Serial.println(currentTime);
+    displaySensorValues(temperature, humidity, ppm);
+    publishSensorData(temperature, humidity, ppm, currentTime);
 
-    return String(formattedDateTime);
-  } else {
-    Serial.println("ERROR - Time");
-    return "1970-01-01 00:00:00";
-  }
-}
-
-
-String createJSONPayload(float temperature, float humidity, float ppm, String timestamp) {
-  String json = "{";
-  json += "\"temperature\":";
-  json += String(temperature, 1);
-  json += ",";
-  json += "\"humidity\":";
-  json += String(humidity, 1);
-  json += ",";
-  json += "\"ppm\":";
-  json += String(ppm, 1);
-  json += ",";
-  json += "\"date\":\"";
-  json += timestamp;
-  json += "\"}";
-  return json;
-}
-
-void connectToMQTT() {
-  if (!client.connected()) {
-    Serial.println("Tentative de connection MQTT...");
-    if (client.connect("ESPClient")) {  // No username or password
-      Serial.println("MQTT connecté.");
-    } else {
-      Serial.print("MQTT connection failed. Error: ");
-      Serial.println(client.state());
-    }
-  }
-}
-
-
-// Publish smthg on a topic
-void publishToMQTT(const char* topic, String payload) {
-  // code inspired by the tutorial above
-  char message[payload.length() + 1];
-  payload.toCharArray(message, payload.length() + 1);
-  client.publish(topic, message);
-  Serial.print("Published: ");
-  Serial.println(payload);
-}
-
-void calibrateAtSpecificTime() {
-  // Get the current time from the NTP client (epoch time in seconds)
-  unsigned long currentEpochTime = timeClient.getEpochTime() % 86400; // 86400 sec in one day
-  unsigned long targetEpochTime = (CALIBRATION_HOUR * 3600) + (CALIBRATION_MINUTE * 60); // In seconds since midnight
-
-
-  // Check if the current time has passed the target calibration time
-  if (currentEpochTime >= targetEpochTime and currentEpochTime < targetEpochTime + WAITTIME) {
-    MQ135Sensor._rzero = MQ135Sensor.getRZero();
-    Serial.print("MQT135 - Calibration RZero : ");
-    Serial.println(MQ135Sensor._rzero);
-  }
-}
-
-
-void readAndDisplayDHTValues() {
-  float temperature = dhtSensor.readTemperature();
-  float humidity = dhtSensor.readHumidity();
-
-  if (isnan(temperature)) {
-    Serial.println("DHT11 ERROR - Temperature");
-  } else {
-    Serial.print("Temperature = ");
-    Serial.print(temperature);
-    Serial.println(" °C");
-  }
-
-  if (isnan(humidity)) {
-    Serial.println("DHT11 ERROR - Humidity");
-  } else {
-    Serial.print("Humidity = ");
-    Serial.print(humidity);
-    Serial.println(" %");
-  }
-}
-
-void readAndDisplayMQ135Values() {
-  float ppm = MQ135Sensor.getPPM();
-  Serial.print("Particules de gaz détecté (pour 1 000 000 de particules d'air) = ");
-  Serial.print(ppm);
-
-  if (ppm>DANGEROUS_THRESHOLD) {
-    Serial.println(" Qualité de l'air dangereuse");
-  } else if (ppm>CAUTION_THRESHOLD) {
-    Serial.println(" Qualité de l'air pas bonne");
-  } else {
-    Serial.println(" Qualité de l'air bonne");
-  }
+    delay(WAITTIME);
 }
