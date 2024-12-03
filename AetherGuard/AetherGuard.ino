@@ -25,7 +25,7 @@ ammonia, benzene, alcohols, nitrogen oxide, carbon monoxide)
 0,96-zool oled display 
 
   -  https://www.mouser.com/datasheet/2/1398/Soldered_333099-3395096.pdf?srsltid=AfmBOooTmRiDG2rQgAWGAja9TuC1vTCoJ541tHopa_ZUtx9-k8u0TNcs (datasheet)
-
+  - https://randomnerdtutorials.com/esp8266-0-96-inch-oled-display-with-arduino-ide/ (tuto)
 */
 
 // Include headers
@@ -34,12 +34,15 @@ ammonia, benzene, alcohols, nitrogen oxide, carbon monoxide)
 #include "time_utils.h"
 #include "sensors.h"
 #include "utils.h"
+#include "displayScreen.h"
+
 
 void setup() {
     Serial.begin(9600);
     initSensors();
     connectToWiFi();
     connectToMQTT();
+    initDisplay();
 }
 
 void loop() {
@@ -53,6 +56,7 @@ void loop() {
     Serial.print("Date et heure actuelles : ");
     Serial.println(currentTime);
     displaySensorValues(temperature, humidity, ppm);
+    displayDataOnScreen(temperature, humidity, ppm);
     publishSensorData(temperature, humidity, ppm, currentTime);
 
     delay(WAITTIME);

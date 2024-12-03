@@ -42,7 +42,14 @@ void displaySensorValues(float temperature, float humidity, float ppm) {
     Serial.print("Humidité : ");
     Serial.println(humidity);
     Serial.print("Qualité de l'air (ppm) : ");
-    Serial.println(ppm);
+    Serial.print(ppm);
+    if (ppm <CAUTION_THRESHOLD) {
+      Serial.println(" Sain");
+    } else if (ppm < DANGEROUS_THRESHOLD) {
+      Serial.println(" Mauvaise qualité");
+    } else{
+      Serial.println(" Dangereux");
+    }
 }
 
 #endif
