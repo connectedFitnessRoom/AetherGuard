@@ -5,7 +5,7 @@
 #include "MQ135.h"
 #include "config.h"
 
-DHT dhtSensor(DHTPIN, DHTTYPE);
+DHT dhtSensor(DHTPIN, DHT11);
 MQ135 MQ135Sensor(MQ135_ANALOG_PIN);
 
 void initSensors() {

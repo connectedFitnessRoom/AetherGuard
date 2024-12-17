@@ -24,6 +24,7 @@ void connectToWiFi() {
 }
 
 void connectToMQTT() {
+  client.setServer(MQTT_BROKER, MQTT_BROKER_PORT);
     if (!client.connected()) {
         Serial.println("Tentative de connexion MQTT...");
         if (client.connect("ESPClient")) {

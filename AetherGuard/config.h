@@ -2,11 +2,13 @@
 #define CONFIG_H
 
 // WiFi configuration
-const char* ssid = "Corentin's Galaxy A54 5G";
-const char* password = "7777abcd";
+const char* ssid = "FitnessClub";
+const char* password = "Fitness123";
+//const char* ssid = "Corentin's Galaxy A54 5G";
+//const char* password = "7777abcd";
 
 // MQTT configuration
-const char* MQTT_BROKER = "192.168.168.129";
+const char* MQTT_BROKER = "192.168.70.39";
 const int MQTT_BROKER_PORT = 1883;
 const char* MQTT_TOPIC = "AetherGuard/sensordata";
 

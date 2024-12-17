@@ -35,6 +35,7 @@ ammonia, benzene, alcohols, nitrogen oxide, carbon monoxide)
 #include "sensors.h"
 #include "utils.h"
 #include "displayScreen.h"
+#include "MQ135.h"
 
 
 void setup() {
@@ -43,6 +44,7 @@ void setup() {
     connectToWiFi();
     connectToMQTT();
     initDisplay();
+    MQ135Sensor._rzero = MQ135Sensor.getRZero();
 }
 
 void loop() {
